@@ -305,7 +305,7 @@ LOAN_TERM_BLOCKS = [
         "lender_label": "Lender", "lender": "YS Affiliates LLC",
         "borrower_label": "Borrowers", "borrower": "Multiple Affiliates",
         "split_side": "borrower",
-        "notes": ["create invoices on YS Affiliates LLC and and bills on the Affiliates"],
+        "notes": ["create invoices on YS Affiliates LLC and journal entries on the Affiliates (debit to Interest Expense - YS Affiliates and credit to Accrued Interest)"],
     },
     {
         "loan_type": "ystix", "rate_group": "ystix",
