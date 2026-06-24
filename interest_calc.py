@@ -41,8 +41,8 @@ GROUP_TERMS = {
     "affiliates": ("Affiliates", ["", "", ""]),
     "ystix": ("YS Tix - YS Affiliates", [
         "USE FOR INTEREST CHARGED BY Y&S TICKETS TO YS AFFILIATES LLC",
-        "Y&S Tickets - Debit due from/to YS Affiliates, Credit Interest Expense Offset (YS Affil)",
-        "YS Affiliates - Debit Interest Income Offset (YS Affil), Credit due from/to Y&S Tickets",
+        "Y&S Tickets - Debit due from/to YS Affiliates, Credit Interest Expense (YS Affil Offset)",
+        "YS Affiliates - Debit Interest Income (YSTix Offset), Credit due from/to Y&S Tickets",
     ]),
     "mazel": ("Mazel (Damona & Crew)", [
         "ONLY FOR DAMONA AND CREW. INTEREST INCOME GOES ON Mazel Investing",
@@ -313,8 +313,8 @@ LOAN_TERM_BLOCKS = [
         "borrower_label": "Borrower", "borrower": "YS Affiliates LLC",
         "split_side": None,
         "notes": [
-            "Y&S Tickets - Debit due from/to YS Affiliates, Credit Interest Expense Offset (YS Affil)",
-            "YS Affiliates - Debit Interest Income Offset (YS Affil), Credit due from/to Y&S Tickets",
+            "Y&S Tickets - Debit due from/to YS Affiliates, Credit Interest Expense (YS Affil Offset)",
+            "YS Affiliates - Debit Interest Income (YSTix Offset), Credit due from/to Y&S Tickets",
         ],
     },
     {
