@@ -304,12 +304,14 @@ LOAN_TERM_BLOCKS = [
         "loan_type": "affiliates", "rate_group": "affiliates",
         "lender_label": "Lender", "lender": "YS Affiliates LLC",
         "borrower_label": "Borrowers", "borrower": "Multiple Affiliates",
+        "split_side": "borrower",
         "notes": ["create invoices on YS Affiliates LLC and and bills on the Affiliates"],
     },
     {
         "loan_type": "ystix", "rate_group": "ystix",
         "lender_label": "Lender", "lender": "Y&S Tickets Inc",
         "borrower_label": "Borrower", "borrower": "YS Affiliates LLC",
+        "split_side": None,
         "notes": [
             "Y&S Tickets - Debit due from/to YS Affiliates, Credit Interest Expense Offset (YS Affil)",
             "YS Affiliates - Debit Interest Income Offset (YS Affil), Credit due from/to Y&S Tickets",
@@ -319,15 +321,55 @@ LOAN_TERM_BLOCKS = [
         "loan_type": "damona", "rate_group": "mazel",
         "lender_label": "Lender", "lender": "Mazel Investing",
         "borrower_label": "Borrower", "borrower": "Damona & Crew",
+        "split_side": None,
         "notes": ["create invoice on Mazel Investing and bill on Damona & Crew"],
     },
     {
         "loan_type": "eitz_chaim", "rate_group": "mazel",
         "lender_label": "Lenders", "lender": "Eitz Chaim, TicketVault",
         "borrower_label": "Borrower", "borrower": "Mazel Investing",
+        "split_side": "lender",
         "notes": ["create bills on Mazel Investing"],
     },
 ]
+
+BLOCK_BY_TYPE = {b["loan_type"]: b for b in LOAN_TERM_BLOCKS}
+
+
+def _clean_party(name):
+    """Strip accounting prefixes so an account reads as the party name,
+    e.g. 'NR - YS Asher' -> 'YS Asher'."""
+    s = str(name).strip()
+    return re.sub(r"^(?:N/?R|N/?P|Note\s+Receivable|Note\s+Payable)\s*-\s*",
+                  "", s, flags=re.I).strip()
+
+
+def _build_summary_sheet(wb, summary_rows):
+    """
+    Build the "Summary" tab: one row per loan with Lender, Borrower, the
+    monthly interest Amount (linked live to that loan's calc tab), and the
+    end-of-month Date. Inserted right after the Loan Terms tab.
+    """
+    ws = wb.create_sheet("Summary")
+    for i, h in enumerate(["Lender", "Borrower", "Amount", "Date"]):
+        c = ws.cell(row=1, column=1 + i, value=h)
+        c.font = Font(name=FONT_NAME, bold=True)
+
+    for r, row in enumerate(summary_rows, start=2):
+        ws.cell(row=r, column=1, value=row["lender"]).font = Font(name=FONT_NAME)
+        ws.cell(row=r, column=2, value=row["borrower"]).font = Font(name=FONT_NAME)
+        a = ws.cell(row=r, column=3, value=row["amount_formula"])
+        a.number_format = MONEY
+        a.font = Font(name=FONT_NAME)
+        d = ws.cell(row=r, column=4, value=row["date"])
+        d.number_format = "m/d/yyyy"
+        d.font = Font(name=FONT_NAME)
+
+    _autosize_columns(ws, min_col=1, max_col=4)
+    # Move it to be the second sheet, right after "Loan Terms".
+    idx = wb.sheetnames.index("Summary")
+    wb.move_sheet("Summary", offset=-(idx - 1))
+    return ws
 
 
 def _build_loan_terms(wb, company, rates, days_in_year):
@@ -489,6 +531,7 @@ def _build_calc_sheet(wb, parsed, tab_name, daily_cell, sign):
             ws.cell(row=r, column=col).border = BORDER
 
     sum_cells = []
+    account_totals = []          # (account_name, interest-total cell) per block
     row = hdr_row + 2
     for blk in parsed["blocks"]:
         lbl = ws.cell(row=row, column=1, value=blk["account"])
@@ -528,6 +571,7 @@ def _build_calc_sheet(wb, parsed, tab_name, daily_cell, sign):
             ws.cell(row=tot, column=cc).fill = TOTAL_FILL
         ws.cell(row=tot, column=7).fill = TOTAL_FILL
         sum_cells.append(f"{COL['interest']}{tot}")
+        account_totals.append((blk["account"], f"{COL['interest']}{tot}"))
         row += 2
 
     g = row + 1
@@ -542,6 +586,7 @@ def _build_calc_sheet(wb, parsed, tab_name, daily_cell, sign):
 
     _autosize_columns(ws, min_col=1, max_col=15)
     ws.freeze_panes = "B6"
+    return f"{get_column_letter(13)}{g}", account_totals
 
 
 # ----- orchestrator ------------------------------------------------------
@@ -574,7 +619,7 @@ def generate(jobs, output_path, rates=None, days_in_year=365):
     group_rates = {g: rates.get(g, RATE_GROUP_DEFAULTS[g]) for g in GROUP_ORDER}
     daily_cells = _build_loan_terms(wb, company, group_rates, days_in_year)
 
-    used_names, tabs = set(), []
+    used_names, tabs, summary_rows = set(), [], []
     for p in prepared:
         cfg = LOAN_TYPES[p["loan_type"]]
         tab = cfg["tab"]
@@ -584,7 +629,8 @@ def generate(jobs, output_path, rates=None, days_in_year=365):
             n += 1
         used_names.add(tab[:31])
 
-        _build_calc_sheet(wb, p["parsed"], tab, daily_cells[p["loan_type"]], p["sign"])
+        grand_cell, account_totals = _build_calc_sheet(
+            wb, p["parsed"], tab, daily_cells[p["loan_type"]], p["sign"])
         breakdown, grand = compute_interest(
             p["parsed"], p["rate"], days_in_year, p["sign"])
         tabs.append({
@@ -595,6 +641,33 @@ def generate(jobs, output_path, rates=None, days_in_year=365):
             "num_accounts": len(p["parsed"]["blocks"]),
             "breakdown": breakdown, "grand_total": grand,
         })
+
+        # Summary rows: end-of-month date + live link to the calc tab.
+        # If a loan bundles multiple parties (split_side), list each on its
+        # own row; otherwise emit a single row for the whole loan.
+        block = BLOCK_BY_TYPE[p["loan_type"]]
+        pm = p["parsed"]["month"] or 4
+        py = p["parsed"]["year"] or dt.date.today().year
+        eom = dt.datetime(py, pm, calendar.monthrange(py, pm)[1])
+        split = block.get("split_side")
+        if split in ("borrower", "lender") and len(account_totals) > 1:
+            for account, cell in account_totals:
+                party = _clean_party(account)
+                summary_rows.append({
+                    "lender": party if split == "lender" else block["lender"],
+                    "borrower": party if split == "borrower" else block["borrower"],
+                    "amount_formula": f"='{tab}'!{cell}",
+                    "date": eom,
+                })
+        else:
+            summary_rows.append({
+                "lender": block["lender"],
+                "borrower": block["borrower"],
+                "amount_formula": f"='{tab}'!{grand_cell}",
+                "date": eom,
+            })
+
+    _build_summary_sheet(wb, summary_rows)
 
     wb.save(output_path)
 
