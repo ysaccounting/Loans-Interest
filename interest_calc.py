@@ -233,23 +233,33 @@ def parse_report(path):
 
 # ----- loan-type detection (from data, not file name) --------------------
 def detect_loan_type(parsed):
-    parts = [str(parsed.get("company") or "")]
-    parts += [str(x) for x in parsed.get("labels", [])]
-    for blk in parsed["blocks"]:
-        parts.append(str(blk.get("account") or ""))
-        for rec in blk["rows"]:
-            parts += [str(rec.get("account") or ""), str(rec.get("name") or ""),
-                      str(rec.get("memo") or "")]
-    blob = " ".join(parts).lower()
+    """
+    Classify a report using STRUCTURAL evidence only: the company name (A1)
+    and the account/section labels. Transaction memos and names are
+    deliberately excluded -- a memo like "Non-cash transfer | YSM Tickets"
+    merely mentions tickets and must not make an Affiliates report look like
+    the Y&S Tickets loan.
+    """
+    company = str(parsed.get("company") or "").lower()
+    labels = " ".join(str(x) for x in parsed.get("labels", [])).lower()
+    accounts = " ".join(str(b.get("account") or "") for b in parsed["blocks"]).lower()
+    structure = f"{labels} {accounts}"
 
-    if "eitz chaim" in blob or "ticket vault" in blob or "subnotes" in blob:
+    # Mazel reports: identify by the counterparty named in the accounts.
+    if "eitz chaim" in structure or "ticket vault" in structure or "subnotes" in structure:
         return "eitz_chaim"
-    if "damona" in blob:
+    if "damona" in structure:
         return "damona"
-    if ("y&s tickets" in blob or "ys tickets" in blob or "y&s tix" in blob
-            or "ys tix" in blob or "tickets" in blob):
+
+    # Y&S Tickets loan: the account itself must reference the Y&S Tickets
+    # counterparty (e.g. "Due from/to Y&S Tickets"), not just any "tickets".
+    if re.search(r"(y\s*&\s*s|ys)\s*(tickets|tix)", structure):
         return "ystix"
-    if "affiliates" in blob or "notes receivable" in blob:
+
+    # Affiliates: notes receivable from the affiliate sub-accounts.
+    if "notes receivable" in structure or re.match(r"^\s*n/?r\s*-", accounts):
+        return "affiliates"
+    if "affiliates" in company or "affiliates" in structure:
         return "affiliates"
     return "affiliates"
 
